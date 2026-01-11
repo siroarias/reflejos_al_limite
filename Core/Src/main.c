@@ -226,11 +226,11 @@ void Display_UpdateBuffer(void) {
         display_buffer[2] = (time_limit_ms / 10) % 10;    // Decenas
         display_buffer[3] = time_limit_ms % 10;           // Unidades
     } else {
-        // Actualizar buffer con las puntuaciones
-        display_buffer[0] = score_p1 / 10;  // Decenas P1
-        display_buffer[1] = score_p1 % 10;  // Unidades P1
-        display_buffer[2] = score_p2 / 10;  // Decenas P2
-        display_buffer[3] = score_p2 % 10;  // Unidades P2
+        // Actualizar buffer con las puntuaciones (intercambiadas para coincidir con posición física)
+        display_buffer[0] = score_p2 / 10;  // Decenas P2 (botón derecha)
+        display_buffer[1] = score_p2 % 10;  // Unidades P2 (botón derecha)
+        display_buffer[2] = score_p1 / 10;  // Decenas P1 (botón izquierda)
+        display_buffer[3] = score_p1 % 10;  // Unidades P1 (botón izquierda)
     }
 }
 
@@ -441,8 +441,8 @@ void UpdateDifficulty(void) {
             showing_difficulty = true;
         }
         
-        // Mapear ADC (0-4095) a tiempo máximo (200ms - 1s)
-        max_reaction_time_us = 200000 + ((adc_value * 800000) / 4095);
+        // Mapear ADC (0-4095) a tiempo máximo (250ms - 1.5s)
+        max_reaction_time_us = 250000 + ((adc_value * 1250000) / 4095);
     }
     HAL_ADC_Stop(&hadc1);
 }
