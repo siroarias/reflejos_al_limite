@@ -21,17 +21,69 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdlib.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum {
+    GAME_IDLE,
+    GAME_READY,
+    GAME_WAIT_RANDOM,
+    GAME_LED_ON_WAIT_PRESS,
+    GAME_SHOW_RESULT,
+    GAME_ERROR
+} GameState_t;
 
+typedef enum {
+    PLAYER_1 = 0,
+    PLAYER_2 = 1
+} Player_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+// Pines del display 7 segmentos
+#define SEG_A_PORT GPIOB
+#define SEG_A_PIN  GPIO_PIN_0
+#define SEG_B_PORT GPIOB
+#define SEG_B_PIN  GPIO_PIN_1
+#define SEG_C_PORT GPIOB
+#define SEG_C_PIN  GPIO_PIN_2
+#define SEG_D_PORT GPIOB
+#define SEG_D_PIN  GPIO_PIN_3
+#define SEG_E_PORT GPIOB
+#define SEG_E_PIN  GPIO_PIN_4
+#define SEG_F_PORT GPIOB
+#define SEG_F_PIN  GPIO_PIN_5
+#define SEG_G_PORT GPIOB
+#define SEG_G_PIN  GPIO_PIN_6
+#define SEG_DP_PORT GPIOB
+#define SEG_DP_PIN  GPIO_PIN_7
 
+#define DIG1_PORT GPIOA
+#define DIG1_PIN  GPIO_PIN_8
+#define DIG2_PORT GPIOA
+#define DIG2_PIN  GPIO_PIN_9
+#define DIG3_PORT GPIOA
+#define DIG3_PIN  GPIO_PIN_10
+#define DIG4_PORT GPIOA
+#define DIG4_PIN  GPIO_PIN_15
+
+// Pines de LEDs
+#define LED1_PORT GPIOB
+#define LED1_PIN  GPIO_PIN_8
+#define LED2_PORT GPIOB
+#define LED2_PIN  GPIO_PIN_9
+
+// Constantes del juego
+#define DEBOUNCE_TIME_MS 50
+#define MIN_WAIT_TIME_MS 1000
+#define MAX_WAIT_TIME_MS 5000
+#define MIN_REACTION_TIME_US 50000   // 50ms mínimo
+#define MAX_REACTION_TIME_US 1000000 // 1s máximo base
+#define SCORE_LIMIT 99
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -46,7 +98,46 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
+// Variables del juego
+GameState_t game_state = GAME_IDLE;
+Player_t current_player = PLAYER_1;
+uint8_t score_p1 = 0;
+uint8_t score_p2 = 0;
+uint32_t led_on_time = 0;
+uint32_t button_press_time = 0;
+uint32_t wait_start_time = 0;
+uint32_t random_wait_time = 0;
+bool game_running = false;
 
+// Variables para debounce
+uint32_t last_button_time_p1 = 0;
+uint32_t last_button_time_p2 = 0;
+
+// Variables del display
+uint8_t current_digit = 0;
+uint8_t display_buffer[4] = {0, 0, 0, 0}; // P1: [0][1], P2: [2][3]
+
+// Tabla de segmentos para dígitos 0-9 (cátodo común, 0=encendido)
+const uint8_t digit_segments[10] = {
+    0b00000011, // 0: a,b,c,d,e,f (invertido)
+    0b10011111, // 1: b,c (invertido)
+    0b00100101, // 2: a,b,d,e,g (invertido)
+    0b00001101, // 3: a,b,c,d,g (invertido)
+    0b10011001, // 4: b,c,f,g (invertido)
+    0b01001001, // 5: a,c,d,f,g (invertido)
+    0b01000001, // 6: a,c,d,e,f,g (invertido)
+    0b00011111, // 7: a,b,c (invertido)
+    0b00000001, // 8: a,b,c,d,e,f,g (invertido)
+    0b00001001  // 9: a,b,c,d,f,g (invertido)
+};
+
+// Variables de dificultad
+uint32_t max_reaction_time_us = MAX_REACTION_TIME_US;
+uint32_t last_adc_value = 0;
+bool showing_difficulty = false;
+uint32_t last_difficulty_change_time = 0;
+#define DIFFICULTY_DISPLAY_TIME_MS 2000
+#define ADC_CHANGE_THRESHOLD 50  // Umbral para detectar cambios significativos
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -56,11 +147,319 @@ static void MX_ADC1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
+// Funciones del display
+void Display_Clear(void);
+void Display_WriteSegments(uint8_t segments);
+void Display_SelectDigit(uint8_t digit);
+void Display_UpdateBuffer(void);
+void Display_Refresh(void);
 
+// Funciones del juego
+void Game_Init(void);
+void Game_StateMachine(void);
+void Game_StartNewRound(void);
+void Game_ProcessButtonPress(Player_t player);
+void Game_UpdateScore(Player_t player, bool correct);
+void Game_Reset(void);
+
+// Funciones de utilidad
+uint32_t GetRandomWaitTime(void);
+void UpdateDifficulty(void);
+void SetLED(Player_t player, bool state);
+uint32_t GetMicroseconds(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// ========== FUNCIONES DEL DISPLAY ==========
+void Display_Clear(void) {
+    HAL_GPIO_WritePin(SEG_A_PORT, SEG_A_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_B_PORT, SEG_B_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_C_PORT, SEG_C_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_D_PORT, SEG_D_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_E_PORT, SEG_E_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_F_PORT, SEG_F_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_G_PORT, SEG_G_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_DP_PORT, SEG_DP_PIN, GPIO_PIN_SET);
+    
+    HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_SET);
+}
+
+void Display_WriteSegments(uint8_t segments) {
+    HAL_GPIO_WritePin(SEG_A_PORT, SEG_A_PIN, (segments & 0x80) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_B_PORT, SEG_B_PIN, (segments & 0x40) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_C_PORT, SEG_C_PIN, (segments & 0x20) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_D_PORT, SEG_D_PIN, (segments & 0x10) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_E_PORT, SEG_E_PIN, (segments & 0x08) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_F_PORT, SEG_F_PIN, (segments & 0x04) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_G_PORT, SEG_G_PIN, (segments & 0x02) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_DP_PORT, SEG_DP_PIN, (segments & 0x01) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+}
+
+void Display_SelectDigit(uint8_t digit) {
+    // Apagar todos los dígitos primero
+    HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_RESET);
+    
+    // Encender el dígito seleccionado
+    switch(digit) {
+        case 0: HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_SET); break;
+        case 1: HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_SET); break;
+        case 2: HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_SET); break;
+        case 3: HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_SET); break;
+    }
+}
+
+void Display_UpdateBuffer(void) {
+    if (showing_difficulty) {
+        // Mostrar tiempo límite en milisegundos (ej: 0500 para 500ms)
+        uint32_t time_limit_ms = max_reaction_time_us / 1000;
+        
+        display_buffer[0] = (time_limit_ms / 1000) % 10;  // Miles
+        display_buffer[1] = (time_limit_ms / 100) % 10;   // Centenas 
+        display_buffer[2] = (time_limit_ms / 10) % 10;    // Decenas
+        display_buffer[3] = time_limit_ms % 10;           // Unidades
+    } else {
+        // Actualizar buffer con las puntuaciones
+        display_buffer[0] = score_p1 / 10;  // Decenas P1
+        display_buffer[1] = score_p1 % 10;  // Unidades P1
+        display_buffer[2] = score_p2 / 10;  // Decenas P2
+        display_buffer[3] = score_p2 % 10;  // Unidades P2
+    }
+}
+
+void Display_Refresh(void) {
+    // PASO 1: Apagar TODOS los dígitos primero (HIGH = apagado en cátodo común)
+    HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_SET);
+    
+    // PASO 2: Limpiar TODOS los segmentos (HIGH = apagado en cátodo común)
+    HAL_GPIO_WritePin(SEG_A_PORT, SEG_A_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_B_PORT, SEG_B_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_C_PORT, SEG_C_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_D_PORT, SEG_D_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_E_PORT, SEG_E_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_F_PORT, SEG_F_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_G_PORT, SEG_G_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_DP_PORT, SEG_DP_PIN, GPIO_PIN_SET);
+    
+    // PASO 3: Pequeña pausa para estabilizar
+    for(volatile int i = 0; i < 10; i++);
+    
+    // PASO 4: Escribir segmentos del dígito actual
+    Display_WriteSegments(digit_segments[display_buffer[current_digit]]);
+    
+    // PASO 5: Encender SOLO el dígito correspondiente (LOW = encendido en cátodo común)
+    switch(current_digit) {
+        case 0: HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_RESET); break;
+        case 1: HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_RESET); break;
+        case 2: HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_RESET); break;
+        case 3: HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_RESET); break;
+    }
+    
+    // PASO 6: Pasar al siguiente dígito
+    current_digit = (current_digit + 1) % 4;
+}
+
+// ========== FUNCIONES DEL JUEGO ==========
+void Game_Init(void) {
+    game_state = GAME_IDLE;
+    score_p1 = 0;
+    score_p2 = 0;
+    current_player = PLAYER_1;
+    game_running = false;
+    
+    // Apagar LEDs
+    SetLED(PLAYER_1, false);
+    SetLED(PLAYER_2, false);
+    
+    // Actualizar display
+    Display_UpdateBuffer();
+    
+    // Inicializar generador aleatorio con ADC
+    HAL_ADC_Start(&hadc1);
+    HAL_ADC_PollForConversion(&hadc1, 100);
+    uint32_t adc_val = HAL_ADC_GetValue(&hadc1);
+    HAL_ADC_Stop(&hadc1);
+    srand(adc_val + HAL_GetTick());
+    
+    // Inicializar valor del ADC para detección de cambios
+    last_adc_value = adc_val;
+}
+
+void Game_StartNewRound(void) {
+    // Seleccionar jugador aleatorio
+    current_player = (rand() % 2) ? PLAYER_1 : PLAYER_2;
+    
+    // Generar tiempo de espera aleatorio
+    random_wait_time = GetRandomWaitTime();
+    wait_start_time = HAL_GetTick();
+    
+    game_state = GAME_WAIT_RANDOM;
+}
+
+void Game_ProcessButtonPress(Player_t player) {
+    uint32_t press_time = GetMicroseconds();
+    
+    switch(game_state) {
+        case GAME_IDLE:
+            // Iniciar juego
+            game_running = true;
+            Game_StartNewRound();
+            break;
+            
+        case GAME_WAIT_RANDOM:
+            // Pulsación prematura
+            if (player == current_player) {
+                Game_UpdateScore(player, false);
+                game_state = GAME_SHOW_RESULT;
+            }
+            break;
+            
+        case GAME_LED_ON_WAIT_PRESS:
+            if (player == current_player) {
+                // Calcular tiempo de reacción
+                uint32_t reaction_time = press_time - led_on_time;
+                
+                // Apagar LED
+                SetLED(player, false);
+                
+                // Evaluar reacción
+                if (reaction_time >= MIN_REACTION_TIME_US && reaction_time <= max_reaction_time_us) {
+                    Game_UpdateScore(player, true);
+                } else {
+                    Game_UpdateScore(player, false);
+                }
+                
+                game_state = GAME_SHOW_RESULT;
+            }
+            break;
+            
+        default:
+            break;
+    }
+}
+
+void Game_UpdateScore(Player_t player, bool correct) {
+    if (correct) {
+        if (player == PLAYER_1 && score_p1 < SCORE_LIMIT) {
+            score_p1++;
+        } else if (player == PLAYER_2 && score_p2 < SCORE_LIMIT) {
+            score_p2++;
+        }
+    }
+    
+    if (!showing_difficulty) {
+        Display_UpdateBuffer();
+    }
+}
+
+void Game_Reset(void) {
+    score_p1 = 0;
+    score_p2 = 0;
+    game_running = false;
+    game_state = GAME_IDLE;
+    
+    SetLED(PLAYER_1, false);
+    SetLED(PLAYER_2, false);
+    
+    if (!showing_difficulty) {
+        Display_UpdateBuffer();
+    }
+}
+
+void Game_StateMachine(void) {
+    static uint32_t result_start_time = 0;
+    
+    switch(game_state) {
+        case GAME_IDLE:
+            // Esperando inicio del juego
+            break;
+            
+        case GAME_WAIT_RANDOM:
+            if ((HAL_GetTick() - wait_start_time) >= random_wait_time) {
+                // Encender LED y cambiar estado
+                SetLED(current_player, true);
+                led_on_time = GetMicroseconds();
+                game_state = GAME_LED_ON_WAIT_PRESS;
+            }
+            break;
+            
+        case GAME_LED_ON_WAIT_PRESS:
+            // Verificar timeout
+            if ((GetMicroseconds() - led_on_time) > max_reaction_time_us) {
+                SetLED(current_player, false);
+                Game_UpdateScore(current_player, false);
+                game_state = GAME_SHOW_RESULT;
+            }
+            break;
+            
+        case GAME_SHOW_RESULT:
+            if (result_start_time == 0) {
+                result_start_time = HAL_GetTick();
+            }
+            
+            // Mostrar resultado por 1 segundo
+            if ((HAL_GetTick() - result_start_time) >= 1000) {
+                result_start_time = 0;
+                if (game_running) {
+                    Game_StartNewRound();
+                } else {
+                    game_state = GAME_IDLE;
+                }
+            }
+            break;
+            
+        default:
+            game_state = GAME_IDLE;
+            break;
+    }
+}
+
+// ========== FUNCIONES DE UTILIDAD ==========
+uint32_t GetRandomWaitTime(void) {
+    return MIN_WAIT_TIME_MS + (rand() % (MAX_WAIT_TIME_MS - MIN_WAIT_TIME_MS));
+}
+
+void UpdateDifficulty(void) {
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
+        uint32_t adc_value = HAL_ADC_GetValue(&hadc1);
+        
+        // Detectar cambios significativos en el potenciómetro
+        if (abs((int32_t)adc_value - (int32_t)last_adc_value) > ADC_CHANGE_THRESHOLD) {
+            last_adc_value = adc_value;
+            last_difficulty_change_time = HAL_GetTick();
+            showing_difficulty = true;
+        }
+        
+        // Mapear ADC (0-4095) a tiempo máximo (200ms - 1s)
+        max_reaction_time_us = 200000 + ((adc_value * 800000) / 4095);
+    }
+    HAL_ADC_Stop(&hadc1);
+}
+
+void SetLED(Player_t player, bool state) {
+    GPIO_PinState pin_state = state ? GPIO_PIN_SET : GPIO_PIN_RESET;
+    
+    if (player == PLAYER_1) {
+        HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, pin_state);
+    } else {
+        HAL_GPIO_WritePin(LED2_PORT, LED2_PIN, pin_state);
+    }
+}
+
+uint32_t GetMicroseconds(void) {
+    return __HAL_TIM_GET_COUNTER(&htim2);
+}
 
 /* USER CODE END 0 */
 
@@ -97,7 +496,18 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-
+  
+  // Inicializar el juego
+  Game_Init();
+  
+  // Iniciar temporizadores
+  HAL_TIM_Base_Start(&htim2);      // Timer para microsegundos
+  HAL_TIM_Base_Start_IT(&htim3);   // Timer para multiplexado del display
+  
+  // Habilitar interrupciones EXTI
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -107,6 +517,41 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // Ejecutar máquina de estados del juego
+    Game_StateMachine();
+    
+    // Actualizar dificultad cada 100ms
+    static uint32_t last_difficulty_update = 0;
+    if ((HAL_GetTick() - last_difficulty_update) >= 100) {
+        UpdateDifficulty();
+        last_difficulty_update = HAL_GetTick();
+    }
+    
+    // Controlar visualización de dificultad
+    if (showing_difficulty) {
+        if ((HAL_GetTick() - last_difficulty_change_time) >= DIFFICULTY_DISPLAY_TIME_MS) {
+            showing_difficulty = false;
+        }
+        Display_UpdateBuffer();  // Actualizar display cuando se muestre dificultad
+    }
+    
+    // Reset del juego si se mantienen presionados ambos botones
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET && 
+        HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {
+        static uint32_t reset_start = 0;
+        if (reset_start == 0) {
+            reset_start = HAL_GetTick();
+        } else if ((HAL_GetTick() - reset_start) >= 2000) { // 2 segundos
+            Game_Reset();
+            reset_start = 0;
+        }
+    } else {
+        // Reset del contador si no están presionados
+        static uint32_t local_reset_start = 0;
+        local_reset_start = 0;
+    }
+    
+    HAL_Delay(1); // Pequeña pausa para evitar saturar la CPU
   }
   /* USER CODE END 3 */
 }
@@ -321,17 +766,15 @@ static void MX_GPIO_Init(void)
                           |GPIO_PIN_8|GPIO_PIN_9, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_15, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PA0 PA1 */
   GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB0 PB1 PB2 PB3
-                           PB4 PB5 PB6 PB7
-                           PB8 PB9 */
+  /*Configure GPIO pins : PB0 PB1 PB2 PB3 PB4 PB5 PB6 PB7 PB8 PB9 */
   GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3
                           |GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7
                           |GPIO_PIN_8|GPIO_PIN_9;
@@ -340,8 +783,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA8 PA9 PA10 PA13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_13;
+  /*Configure GPIO pins : PA8 PA9 PA10 PA15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -352,6 +795,32 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+// Callback para interrupciones EXTI (botones)
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    uint32_t current_time = HAL_GetTick();
+    
+    // Debounce y procesamiento de botones
+    if (GPIO_Pin == GPIO_PIN_0) { // Jugador 1
+        if ((current_time - last_button_time_p1) > DEBOUNCE_TIME_MS) {
+            last_button_time_p1 = current_time;
+            Game_ProcessButtonPress(PLAYER_1);
+        }
+    }
+    else if (GPIO_Pin == GPIO_PIN_1) { // Jugador 2
+        if ((current_time - last_button_time_p2) > DEBOUNCE_TIME_MS) {
+            last_button_time_p2 = current_time;
+            Game_ProcessButtonPress(PLAYER_2);
+        }
+    }
+}
+
+// Callback para TIM3 (multiplexado del display)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM3) {
+        Display_Refresh();
+    }
+}
 
 /* USER CODE END 4 */
 
