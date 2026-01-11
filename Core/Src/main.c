@@ -108,6 +108,7 @@ uint32_t button_press_time = 0;
 uint32_t wait_start_time = 0;
 uint32_t random_wait_time = 0;
 bool game_running = false;
+bool wrong_player_pressed = false;  // Flag para jugador incorrecto
 
 // Variables para debounce
 uint32_t last_button_time_p1 = 0;
@@ -296,6 +297,9 @@ void Game_Init(void) {
 }
 
 void Game_StartNewRound(void) {
+    // Resetear flag de jugador incorrecto
+    wrong_player_pressed = false;
+    
     // Seleccionar jugador aleatorio
     current_player = (rand() % 2) ? PLAYER_1 : PLAYER_2;
     
@@ -326,7 +330,7 @@ void Game_ProcessButtonPress(Player_t player) {
             
         case GAME_LED_ON_WAIT_PRESS:
             if (player == current_player) {
-                // Calcular tiempo de reacción
+                // Jugador correcto pulsó
                 uint32_t reaction_time = press_time - led_on_time;
                 
                 // Apagar LED
@@ -340,6 +344,23 @@ void Game_ProcessButtonPress(Player_t player) {
                 }
                 
                 game_state = GAME_SHOW_RESULT;
+            } else {
+                // Jugador incorrecto pulsó - restar punto pero no terminar ronda aún
+                if (player == PLAYER_1 && score_p1 > 0) {
+                    score_p1--;
+                } else if (player == PLAYER_2 && score_p2 > 0) {
+                    score_p2--;
+                }
+                
+                // Marcar que el jugador incorrecto ya pulsó
+                wrong_player_pressed = true;
+                
+                // Actualizar display si no se está mostrando dificultad
+                if (!showing_difficulty) {
+                    Display_UpdateBuffer();
+                }
+                
+                // NO cambiar estado - permitir que el jugador correcto aún pueda acertar
             }
             break;
             
@@ -397,7 +418,17 @@ void Game_StateMachine(void) {
             // Verificar timeout
             if ((GetMicroseconds() - led_on_time) > max_reaction_time_us) {
                 SetLED(current_player, false);
-                Game_UpdateScore(current_player, false);
+                
+                // Si el jugador incorrecto pulsó pero el correcto no, solo penalizar al correcto por timeout
+                if (!wrong_player_pressed) {
+                    Game_UpdateScore(current_player, false);
+                } else {
+                    // El jugador incorrecto ya fue penalizado, solo penalizar al correcto por timeout
+                    Game_UpdateScore(current_player, false);
+                }
+                
+                // Resetear flag
+                wrong_player_pressed = false;
                 game_state = GAME_SHOW_RESULT;
             }
             break;
@@ -442,7 +473,8 @@ void UpdateDifficulty(void) {
         }
         
         // Mapear ADC (0-4095) a tiempo máximo (250ms - 1.5s)
-        max_reaction_time_us = 250000 + ((adc_value * 1250000) / 4095);
+        // Usar aritmética de 64 bits para evitar overflow
+        max_reaction_time_us = 250000 + ((uint64_t)adc_value * 1250000) / 4095;
     }
     HAL_ADC_Stop(&hadc1);
 }
@@ -535,10 +567,10 @@ int main(void)
         Display_UpdateBuffer();  // Actualizar display cuando se muestre dificultad
     }
     
-    // Reset del juego si se mantienen presionados ambos botones
+    // Reset del juego si se mantienen presionados ambos botones por 2 segundos
+    static uint32_t reset_start = 0;
     if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET && 
         HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_RESET) {
-        static uint32_t reset_start = 0;
         if (reset_start == 0) {
             reset_start = HAL_GetTick();
         } else if ((HAL_GetTick() - reset_start) >= 2000) { // 2 segundos
@@ -546,9 +578,8 @@ int main(void)
             reset_start = 0;
         }
     } else {
-        // Reset del contador si no están presionados
-        static uint32_t local_reset_start = 0;
-        local_reset_start = 0;
+        // Reset del contador si no están presionados ambos
+        reset_start = 0;
     }
     
     HAL_Delay(1); // Pequeña pausa para evitar saturar la CPU
