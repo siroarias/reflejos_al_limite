@@ -79,8 +79,8 @@ typedef enum {
 
 // Constantes del juego
 #define DEBOUNCE_TIME_MS 50
-#define MIN_WAIT_TIME_MS 1000
-#define MAX_WAIT_TIME_MS 5000
+#define MIN_WAIT_TIME_MS 500
+#define MAX_WAIT_TIME_MS 2000
 #define MIN_REACTION_TIME_US 50000   // 50ms mínimo
 #define MAX_REACTION_TIME_US 1000000 // 1s máximo base
 #define SCORE_LIMIT 99
@@ -820,6 +820,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM3) {
         Display_Refresh();
     }
+}
+
+// Handlers de interrupciones EXTI
+void EXTI0_IRQHandler(void) {
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
+}
+
+void EXTI1_IRQHandler(void) {
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);
 }
 
 /* USER CODE END 4 */
