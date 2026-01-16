@@ -584,6 +584,9 @@ int main(void)
     
     HAL_Delay(1); // Pequeña pausa para evitar saturar la CPU
   }
+    Reflexes_TimeOut_LED();
+    HAL_Delay(2000); // pausa entre rondas (opcional)
+
   /* USER CODE END 3 */
 }
 
@@ -895,3 +898,24 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+void Reflexes_TimeOut_LED(void)
+{
+    uint32_t startTime = HAL_GetTick();
+
+    // Apagar LED al empezar (por seguridad)
+    HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_RESET);
+
+    // Esperar hasta 3 segundos
+    while ((HAL_GetTick() - startTime) < 3000)
+    {
+        // Si se pulsa el botón antes de 3 s, salir sin encender LED
+        if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET)
+        {
+            return; // Botón pulsado a tiempo
+        }
+    }
+
+    // Si llega aquí, NO se pulsó el botón en 3 s
+    HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
+}
+
