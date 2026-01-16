@@ -382,6 +382,26 @@ void Game_UpdateScore(Player_t player, bool correct) {
         Display_UpdateBuffer();
     }
 }
+void Game_DisplayPlayerQuality(PlayerQuality_t quality) {
+
+    switch (quality) {
+        case PLAYER_QUALITY_POOR:
+            Display_Print("POOR");
+            break;
+
+        case PLAYER_QUALITY_AVERAGE:
+            Display_Print("AVERAGE");
+            break;
+
+        case PLAYER_QUALITY_GOOD:
+            Display_Print("GOOD");
+            break;
+
+        case PLAYER_QUALITY_EXCELLENT:
+            Display_Print("EXCELLENT");
+            break;
+    }
+}
 
 void Game_Reset(void) {
     score_p1 = 0;
@@ -918,4 +938,5 @@ void Reflexes_TimeOut_LED(void)
     // Si llega aquí, NO se pulsó el botón en 3 s
     HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
 }
+
 
