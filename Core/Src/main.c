@@ -109,7 +109,8 @@ uint32_t wait_start_time = 0;
 uint32_t random_wait_time = 0;
 bool game_running = false;
 bool wrong_player_pressed = false;  // Flag para jugador incorrecto
-
+int scoreP1 = 0;
+int scoreP2 = 0;
 // Variables para debounce
 uint32_t last_button_time_p1 = 0;
 uint32_t last_button_time_p2 = 0;
@@ -512,7 +513,18 @@ void SetLED(Player_t player, bool state) {
 uint32_t GetMicroseconds(void) {
     return __HAL_TIM_GET_COUNTER(&htim2);
 }
-
+uint8_t sevenSegDigits[10] = {
+    0b00111111, // 0
+    0b00000110, // 1
+    0b01011011, // 2
+    0b01001111, // 3
+    0b01100110, // 4
+    0b01101101, // 5
+    0b01111101, // 6
+    0b00000111, // 7
+    0b01111111, // 8
+    0b01101111  // 9
+};
 /* USER CODE END 0 */
 
 /**
@@ -521,7 +533,16 @@ uint32_t GetMicroseconds(void) {
   */
 int main(void)
 {
+while (1)
+{
+    Reflexes_Game();
 
+    for (int i = 0; i < 100; i++)
+    {
+        Display_Show(1, scoreP1);
+        Display_Show(2, scoreP2);
+    }
+}
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -577,6 +598,7 @@ int main(void)
     if ((HAL_GetTick() - last_difficulty_update) >= 100) {
         UpdateDifficulty();
         last_difficulty_update = HAL_GetTick();
+     
     }
     
     // Controlar visualización de dificultad
@@ -849,7 +871,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void SevenSeg_Write(uint8_t value)
+{
+    HAL_GPIO_WritePin(SEG_A_PORT, SEG_A_PIN, (value & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SEG_B_PORT, SEG_B_PIN, (value & 0x02) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SEG_C_PORT, SEG_C_PIN, (value & 0x04) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SEG_D_PORT, SEG_D_PIN, (value & 0x08) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SEG_E_PORT, SEG_E_PIN, (value & 0x10) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SEG_F_PORT, SEG_F_PIN, (value & 0x20) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SEG_G_PORT, SEG_G_PIN, (value & 0x40) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
 // Callback para interrupciones EXTI (botones)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     uint32_t current_time = HAL_GetTick();
@@ -868,7 +899,76 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
         }
     }
 }
+void Display_Show(uint8_t player, int score)
+{
+    if (score < 0) score = 0;
+    if (score > 99) score = 99;
 
+    uint8_t decenas = score / 10;
+    uint8_t unidades = score % 10;
+
+    if (player == 1)
+    {
+        HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_RESET);
+    }
+    else
+    {
+        HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_RESET);
+    }
+
+    SevenSeg_Write(sevenSegDigits[decenas]);
+    HAL_Delay(3);
+
+    if (player == 1)
+    {
+        HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_SET);
+    }
+    else
+    {
+        HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_SET);
+    }
+
+    SevenSeg_Write(sevenSegDigits[unidades]);
+    HAL_Delay(3);
+}
+void Reflexes_Game(void)
+{
+    uint32_t startTime;
+
+    HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_SET);
+    startTime = HAL_GetTick();
+
+    while ((HAL_GetTick() - startTime) < 2000)
+    {
+        if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
+        {
+            scoreP1++;
+            HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);
+            return;
+        }
+
+        if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_14) == GPIO_PIN_RESET)
+        {
+            scoreP2++;
+            HAL_GPIO_WritePin(LED1_PORT, LED1_PIN, GPIO_PIN_RESET);
+            return;
+        }
+    }
+
+    // Fallo
+    for (int i = 0; i < 6; i++)
+    {
+        HAL_GPIO_TogglePin(LED1_PORT, LED1_PIN);
+        HAL_Delay(150);
+    }
+
+    scoreP1--;
+    scoreP2--;
+}
 // Callback para TIM3 (multiplexado del display)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM3) {
@@ -938,5 +1038,6 @@ void Reflexes_TimeOut_LED(void)
     // Si llega aquí, NO se pulsó el botón en 3 s
     HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
 }
+
 
 
