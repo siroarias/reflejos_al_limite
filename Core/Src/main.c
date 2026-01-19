@@ -191,7 +191,32 @@ void Display_Clear(void) {
     HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_SET);
 }
 
-//añadir aqui
+void Display_WriteSegments(uint8_t segments) {
+    HAL_GPIO_WritePin(SEG_A_PORT, SEG_A_PIN, (segments & 0x80) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_B_PORT, SEG_B_PIN, (segments & 0x40) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_C_PORT, SEG_C_PIN, (segments & 0x20) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_D_PORT, SEG_D_PIN, (segments & 0x10) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_E_PORT, SEG_E_PIN, (segments & 0x08) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_F_PORT, SEG_F_PIN, (segments & 0x04) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_G_PORT, SEG_G_PIN, (segments & 0x02) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SEG_DP_PORT, SEG_DP_PIN, (segments & 0x01) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+}
+
+void Display_SelectDigit(uint8_t digit) {
+    // Apagar todos los dígitos primero
+    HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_RESET);
+    
+    // Encender el dígito seleccionado
+    switch(digit) {
+        case 0: HAL_GPIO_WritePin(DIG1_PORT, DIG1_PIN, GPIO_PIN_SET); break;
+        case 1: HAL_GPIO_WritePin(DIG2_PORT, DIG2_PIN, GPIO_PIN_SET); break;
+        case 2: HAL_GPIO_WritePin(DIG3_PORT, DIG3_PIN, GPIO_PIN_SET); break;
+        case 3: HAL_GPIO_WritePin(DIG4_PORT, DIG4_PIN, GPIO_PIN_SET); break;
+    }
+}
 
 void Display_UpdateBuffer(void) {
     if (showing_difficulty) {
@@ -1013,6 +1038,7 @@ void Reflexes_TimeOut_LED(void)
     // Si llega aquí, NO se pulsó el botón en 3 s
     HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
 }
+
 
 
 
