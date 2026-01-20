@@ -272,7 +272,137 @@ void Display_Refresh(void) {
 }
 
 // ========== FUNCIONES DEL JUEGO ==========
+void Game_Init(void) {
+    game_state = GAME_IDLE;
+    score_p1 = 0;
+    score_p2 = 0;
+    current_player = PLAYER_1;
+    game_running = false;
+    
+    // Apagar LEDs
+    SetLED(PLAYER_1, false);
+    SetLED(PLAYER_2, false);
+    
+    // Actualizar display
+    Display_UpdateBuffer();
+    
+    // Inicializar generador aleatorio con ADC
+    HAL_ADC_Start(&hadc1);
+    HAL_ADC_PollForConversion(&hadc1, 100);
+    uint32_t adc_val = HAL_ADC_GetValue(&hadc1);
+    HAL_ADC_Stop(&hadc1);
+    srand(adc_val + HAL_GetTick());
+    
+    // Inicializar valor del ADC para detección de cambios
+    last_adc_value = adc_val;
+}
 
+void Game_StartNewRound(void) {
+    // Resetear flag de jugador incorrecto
+    wrong_player_pressed = false;
+    
+    // Seleccionar jugador aleatorio
+    current_player = (rand() % 2) ? PLAYER_1 : PLAYER_2;
+    
+    // Generar tiempo de espera aleatorio
+    random_wait_time = GetRandomWaitTime();
+    wait_start_time = HAL_GetTick();
+    
+    game_state = GAME_WAIT_RANDOM;
+}
+
+void Game_ProcessButtonPress(Player_t player) {
+    uint32_t press_time = GetMicroseconds();
+    
+    switch(game_state) {
+        case GAME_IDLE:
+            // Iniciar juego
+            game_running = true;
+            Game_StartNewRound();
+            break;
+            
+        case GAME_WAIT_RANDOM:
+            // Pulsación prematura
+            if (player == current_player) {
+                Game_UpdateScore(player, false);
+                game_state = GAME_SHOW_RESULT;
+            }
+            break;
+            
+        case GAME_LED_ON_WAIT_PRESS:
+            if (player == current_player) {
+                // Jugador correcto pulsó
+                uint32_t reaction_time = press_time - led_on_time;
+                
+                // Apagar LED
+                SetLED(player, false);
+                
+                // Evaluar reacción
+                if (reaction_time >= MIN_REACTION_TIME_US && reaction_time <= max_reaction_time_us) {
+                    Game_UpdateScore(player, true);
+                } else {
+                    Game_UpdateScore(player, false);
+                }
+                
+                game_state = GAME_SHOW_RESULT;
+            } else {
+                // Jugador incorrecto pulsó - restar punto pero no terminar ronda aún
+                if (player == PLAYER_1 && score_p1 > 0) {
+                    score_p1--;
+                } else if (player == PLAYER_2 && score_p2 > 0) {
+                    score_p2--;
+                }
+                
+                // Marcar que el jugador incorrecto ya pulsó
+                wrong_player_pressed = true;
+                
+                // Actualizar display si no se está mostrando dificultad
+                if (!showing_difficulty) {
+                    Display_UpdateBuffer();
+                }
+                
+                // NO cambiar estado - permitir que el jugador correcto aún pueda acertar
+            }
+            break;
+            
+        default:
+            break;
+    }
+}
+
+void Game_UpdateScore(Player_t player, bool correct) {
+    if (correct) {
+        if (player == PLAYER_1 && score_p1 < SCORE_LIMIT) {
+            score_p1++;
+        } else if (player == PLAYER_2 && score_p2 < SCORE_LIMIT) {
+            score_p2++;
+        }
+    }
+    
+    if (!showing_difficulty) {
+        Display_UpdateBuffer();
+    }
+}
+void Game_DisplayPlayerQuality(PlayerQuality_t quality) {
+
+    switch (quality) {
+        case PLAYER_QUALITY_POOR:
+            Display_Print("POOR");
+            break;
+
+        case PLAYER_QUALITY_AVERAGE:
+            Display_Print("AVERAGE");
+            break;
+
+        case PLAYER_QUALITY_GOOD:
+            Display_Print("GOOD");
+            break;
+
+        case PLAYER_QUALITY_EXCELLENT:
+            Display_Print("EXCELLENT");
+            break;
+    }
+}
 
 void Game_Reset(void) {
     score_p1 = 0;
@@ -908,6 +1038,7 @@ void Reflexes_TimeOut_LED(void)
     // Si llega aquí, NO se pulsó el botón en 3 s
     HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, GPIO_PIN_SET);
 }
+
 
 
 
